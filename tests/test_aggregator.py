@@ -1,25 +1,26 @@
 import pytest
 from src.services.aggregator import aggregate_ip_data
 
+
 @pytest.fixture
 def anyio_backend():
     return "asyncio"
 
+
 @pytest.mark.anyio
 async def test_aggregator_basic(monkeypatch):
-    # Mock abuseipdb
+    # Purpose: verify that aggregator merges all provider data correctly and computes risk score.
+
+    # Arrange
     def mock_abuse(ip):
         return {"abuse_score": 10, "recent_reports": 2}
 
-    # Mock IPQualityScore
     def mock_quality(ip):
         return {"fraud_score": 30, "vpn": False}
 
-    # Mock ipapi (async)
     async def mock_ipapi(ip):
         return {"hostname": "host.example", "isp": "ExampleISP", "country": "US"}
 
-    # Mock virustotal
     def mock_vt(ip):
         return {"vt_score": 99}
 
@@ -28,8 +29,10 @@ async def test_aggregator_basic(monkeypatch):
     monkeypatch.setattr("src.services.aggregator.fetch_ipapi", mock_ipapi)
     monkeypatch.setattr("src.services.aggregator.fetch_virustotal", mock_vt)
 
+    # Act
     result = await aggregate_ip_data("8.8.8.8")
 
+    # Assert
     assert result["ip"] == "8.8.8.8"
     assert result["hostname"] == "host.example"
     assert result["isp"] == "ExampleISP"

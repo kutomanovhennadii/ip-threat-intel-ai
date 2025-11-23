@@ -6,6 +6,7 @@ import importlib
 
 
 class MockResponse:
+    # Purpose: lightweight mock object for simulating httpx responses.
     def __init__(self, status_code, data):
         self.status_code = status_code
         self._json = data
@@ -15,8 +16,10 @@ class MockResponse:
 
 
 def test_abuseipdb_handles_non_200(monkeypatch):
-    monkeypatch.setenv("ABUSEIPDB_API_KEY", "dummy")
+    # Purpose: ensure fallback is returned when API responds with non-200 code.
 
+    # Arrange
+    monkeypatch.setenv("ABUSEIPDB_API_KEY", "dummy")
     import external.abuseipdb
     importlib.reload(external.abuseipdb)
     from external.abuseipdb import fetch_abuse
@@ -26,14 +29,19 @@ def test_abuseipdb_handles_non_200(monkeypatch):
 
     monkeypatch.setattr("external.abuseipdb.httpx.get", mock_get)
 
+    # Act
     res = fetch_abuse("8.8.8.8")
+
+    # Assert
     assert res["abuse_score"] is None
     assert res["recent_reports"] is None
 
 
 def test_abuseipdb_handles_valid_response(monkeypatch):
-    monkeypatch.setenv("ABUSEIPDB_API_KEY", "dummy")
+    # Purpose: ensure valid API payload is parsed correctly.
 
+    # Arrange
+    monkeypatch.setenv("ABUSEIPDB_API_KEY", "dummy")
     import external.abuseipdb
     importlib.reload(external.abuseipdb)
     from external.abuseipdb import fetch_abuse
@@ -48,14 +56,19 @@ def test_abuseipdb_handles_valid_response(monkeypatch):
 
     monkeypatch.setattr("external.abuseipdb.httpx.get", mock_get)
 
+    # Act
     res = fetch_abuse("8.8.8.8")
+
+    # Assert
     assert res["abuse_score"] == 42
     assert res["recent_reports"] == 7
 
 
 def test_abuseipdb_handles_exception(monkeypatch):
-    monkeypatch.setenv("ABUSEIPDB_API_KEY", "dummy")
+    # Purpose: ensure exceptions during HTTP call return fallback.
 
+    # Arrange
+    monkeypatch.setenv("ABUSEIPDB_API_KEY", "dummy")
     import external.abuseipdb
     importlib.reload(external.abuseipdb)
     from external.abuseipdb import fetch_abuse
@@ -65,6 +78,9 @@ def test_abuseipdb_handles_exception(monkeypatch):
 
     monkeypatch.setattr("external.abuseipdb.httpx.get", mock_get)
 
+    # Act
     res = fetch_abuse("8.8.8.8")
+
+    # Assert
     assert res["abuse_score"] is None
     assert res["recent_reports"] is None

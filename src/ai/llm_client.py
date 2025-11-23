@@ -12,10 +12,13 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 client = Groq(api_key=GROQ_API_KEY)
 
 
+# Regex to detect a JSON block inside ```json ... ``` markers
 JSON_BLOCK_RE = re.compile(r"```json(.*?)```", re.DOTALL)
 
 
 def extract_json_block(text: str):
+    # Extracts JSON inside a fenced ```json ... ``` block
+    # If no such block is found, returns the entire text as fallback
     """Извлекает JSON внутри ```json ... ``` или возвращает None."""
     m = JSON_BLOCK_RE.search(text)
     if m:
@@ -24,16 +27,20 @@ def extract_json_block(text: str):
 
 
 def analyze_with_llm(threat_data: dict) -> dict:
+    # Performs LLM-based threat analysis and returns JSON result
+    # Returns fallback JSON if key is missing or errors occur
     fallback = {
         "risk_level": "Unknown",
         "analysis": "LLM analysis unavailable.",
         "recommendations": "Fallback: manual review recommended.",
     }
 
+    # Check if API key exists
     if not GROQ_API_KEY:
         log.debug("[FALLBACK] No API key")
         return fallback
 
+    # Build user prompt containing required JSON schema and input data
     prompt = f"""
         Analyze the following IP threat intelligence and return STRICT JSON only.
 
@@ -49,6 +56,7 @@ def analyze_with_llm(threat_data: dict) -> dict:
         """
 
     try:
+        # Call Groq LLM API
         log.debug("[LLM] calling Groq...")
         response = client.chat.completions.create(
             model="llama-3.1-8b-instant",
@@ -59,13 +67,16 @@ def analyze_with_llm(threat_data: dict) -> dict:
             temperature=0.2,
         )
 
+        # Extract raw message from the response
         raw_message = response.choices[0].message
         content = raw_message.content  # Главное исправление!
         log.debug(f"[LLM] Raw content: {content}")
 
+        # Extract JSON string from possible code block
         json_text = extract_json_block(content)
         data = json.loads(json_text)
 
+        # Validate required fields
         if (
             "risk_level" in data
             and "analysis" in data
@@ -76,5 +87,6 @@ def analyze_with_llm(threat_data: dict) -> dict:
         return fallback
 
     except Exception as e:
+        # Log and return fallback on any exception
         log.debug(f"[ERROR] {e!r}")
         return fallback

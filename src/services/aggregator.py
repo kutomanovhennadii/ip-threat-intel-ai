@@ -2,19 +2,13 @@
 
 from src.external.abuseipdb import fetch_abuse
 from src.external.ipquality import fetch_quality
-# Эти источники пока не реализованы, но структура должна быть полной:
-try:
-    from src.external.ipapi import fetch_ipapi
-except Exception:
-    fetch_ipapi = lambda ip: {"hostname": None, "isp": None, "country": None}
-
-try:
-    from src.external.virustotal import fetch_virustotal
-except Exception:
-    fetch_virustotal = lambda ip: {"vt_score": None}
+from src.external.virustotal import fetch_virustotal
+from src.external.ipapi import fetch_ipapi
 
 
 def compute_risk_score(data):
+    # Computes an average of available numeric risk indicators.
+    # If no indicators exist, returns None.
     values = []
 
     if data.get("abuse_score") is not None:
@@ -23,27 +17,33 @@ def compute_risk_score(data):
     if data.get("fraud_score") is not None:
         values.append(data["fraud_score"])
 
+    # If no numeric values, return None
     if not values:
         return None
 
+    # Return arithmetic mean of collected values
     return sum(values) / len(values)
 
 
 async def aggregate_ip_data(ip: str) -> dict:
-    # sync-functions executed in thread pool
+    # Aggregates all external threat-intel sources for a given IP.
+    # Mixes sync (thread-pooled) and async calls, then merges results.
+    # Produces a unified dictionary including computed risk_score.
+
+    # Launch sync functions in thread pool
     abuse_t = asyncio.to_thread(fetch_abuse, ip)
     quality_t = asyncio.to_thread(fetch_quality, ip)
     vt_t = asyncio.to_thread(fetch_virustotal, ip)
 
-    # async function executed normally
+    # Launch async function normally
     ipapi_t = fetch_ipapi(ip)   # DO NOT wrap in to_thread
 
-    # await everything
+    # Await all tasks concurrently
     abuse, quality, ipapi, vt = await asyncio.gather(
         abuse_t, quality_t, ipapi_t, vt_t
     )
 
-    # Assemble result
+    # Assemble unified result object
     result = {
         "ip": ip,
         "hostname": ipapi.get("hostname"),
@@ -59,6 +59,7 @@ async def aggregate_ip_data(ip: str) -> dict:
         "vt_score": vt.get("vt_score"),
     }
 
+    # Compute normalized risk score
     result["risk_score"] = compute_risk_score(result)
 
     return result

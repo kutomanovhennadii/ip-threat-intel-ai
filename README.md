@@ -129,3 +129,60 @@ Enter an IP address and click "Analyze" to view:
 
 - raw aggregated threat-intelligence data
 - AI-generated risk analysis (or fallback if the LLM is unavailable)
+
+## VirusTotal API Key Limitations !!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+The API key included in the assignment:
+
+VIRUSTOTAL_API_KEY=81a9d61f38f3c7d7414fd363d20e057441fe8146c98a7500e3ab1f69f841399b9
+
+was tested against every available VirusTotal API family (API v3, API v2, legacy endpoints, and UI API).  
+None of the endpoints accepted the key.  
+This section documents the exact tests performed and the raw responses returned by VirusTotal.
+
+### Tests Performed
+
+All requests were issued from PowerShell using the correct header format:
+
+1. API v3 – users/me  
+   Response: {"error":{"code":"WrongCredentialsError","message":"Wrong API key"}}
+
+2. API v3 – ip_addresses  
+   Response: {"error":{"code":"WrongCredentialsError","message":"Wrong API key"}}
+
+3. API v3 – ip lookup with query-param ?apikey=  
+   Response: {"error":{"code":"AuthenticationRequiredError","message":"X-Apikey header is missing"}}
+
+4. API v3 – Bearer token  
+   Response: {"error":{"code":"AuthenticationRequiredError","message":"X-Apikey header is missing"}}
+
+5. API v2 – official endpoint (vtapi/v2/ip-address/report)  
+   Response: HTTP 403 Forbidden
+
+6. API v2 – legacy endpoints  
+   Response: HTTP 404 Not Found
+
+7. UI API (ui/ip-addresses/…)  
+   Response: {"error":{"code":"NotFoundError","message":"Resource not found."}}
+
+8. Undocumented JSON v2 endpoints  
+   Response: HTTP 404 Not Found
+
+### Conclusion
+
+The provided key is not recognized by any known VirusTotal API.  
+Its behavior does not match expired keys, quota-limited keys, or UI-only tokens.  
+VirusTotal returns the same pattern it uses for keys that do not exist in the system.
+
+### Impact on This Project
+
+The VirusTotal client implementation is correct, but live requests cannot succeed with the assignment key.  
+Consequently, the field vt_score will remain null during execution, and live tests that depend on VirusTotal will fail with an authentication error.
+
+### How to Enable Real VirusTotal Integration
+
+Create a free VirusTotal Community account, obtain your own API v3 key, and place it into .env:
+
+VIRUSTOTAL_API_KEY=<your-real-key>
+
+Once a valid key is provided, all VirusTotal tests pass and the vt_score field is populated with real data.
