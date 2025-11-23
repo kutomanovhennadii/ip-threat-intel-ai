@@ -2,52 +2,87 @@
 import httpx
 from dotenv import load_dotenv
 
-load_dotenv()  # Load environment variables from .env
+# Load environment variables from .env
+load_dotenv()
 
-VT_KEY = os.getenv("VIRUSTOTAL_API_KEY")  # Read VirusTotal API key
-VT_URL = "https://www.virustotal.com/vtapi/v2/ip-address/report"  # VT v2 API endpoint
+VT_KEY = os.getenv("VIRUSTOTAL_API_KEY")
+
+# Proper VirusTotal v3 endpoint (required by assignment)
+VT_URL = "https://www.virustotal.com/api/v3/ip_addresses/"
 
 
-def fetch_virustotal(ip: str) -> dict:
-    # Fetches basic VirusTotal v2 IP report.
-    # Extracts detection count as a simplified "vt_score".
-    # Returns safe fallback if any error occurs.
+async def fetch_virustotal(ip: str) -> dict:
     """
-    VirusTotal API v2.
-    Возвращает:
-    {
-        "vt_score": int | None
-    }
+    Asynchronously fetches VirusTotal v3 IP report.
+
+    IMPORTANT:
+    The API key provided in the assignment does NOT work with
+    ANY VirusTotal API family (v3, v2, legacy, or UI API).
+    VirusTotal consistently returns:
+
+        {"error": {"code": "WrongCredentialsError", "message": "Wrong API key"}}
+
+    or HTTP 403 Forbidden on legacy/v2 endpoints.
+
+    Because of this, vt_score will always be None when using the assignment key.
     """
 
-    # If no API key — return fallback immediately
+    fallback = {"vt_score": None}
+
     if not VT_KEY:
-        return {"vt_score": None}
+        print(f"[VT] No VIRUSTOTAL_API_KEY provided. Using fallback for {ip}")
+        return fallback
+
+    url = f"{VT_URL}{ip}"
 
     try:
-        # Send HTTP GET request to VirusTotal API v2
-        resp = httpx.get(
-            VT_URL,
-            params={"apikey": VT_KEY, "ip": ip},
-            timeout=8.0
-        )
-    except Exception:
-        # Any network or request failure → fallback
-        return {"vt_score": None}
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            resp = await client.get(url, headers={"x-apikey": VT_KEY})
+    except Exception as e:
+        print(f"[VT] Network error for {ip}: {e!r}")
+        return fallback
 
-    # Non-200 status means error
+    # Handle non-200 responses
     if resp.status_code != 200:
-        return {"vt_score": None}
+        print(
+            f"[VT] Bad status {resp.status_code} for {ip}. "
+            f"Body preview: {resp.text[:200]!r}"
+        )
+        return fallback
 
     try:
-        # Parse JSON response body
         data = resp.json()
-    except Exception:
-        return {"vt_score": None}
+    except Exception as e:
+        print(
+            f"[VT] JSON parse error for {ip}: {e!r}. "
+            f"Raw response: {resp.text[:200]!r}"
+        )
+        return fallback
 
-    # VirusTotal API v2 does not provide "malicious" field.
-    # Use number of detected URLs as a basic indicator.
-    vt_score = len(data.get("detected_urls", []))
+    # Detect WrongCredentialsError explicitly
+    if "error" in data:
+        err = data["error"]
+        code = err.get("code")
+        msg = err.get("message")
 
-    # Return normalized result
+        print(f"[VT] API error for {ip}: code={code!r}, message={msg!r}")
+
+        if code == "WrongCredentialsError":
+            print("[VT] Provided key is invalid or not recognized by VirusTotal.")
+
+        return fallback
+
+    # v3 schema: malicious count resides in attributes.last_analysis_stats
+    stats = (
+        data.get("data", {})
+        .get("attributes", {})
+        .get("last_analysis_stats", {})
+    )
+
+    # Combine malicious + suspicious as heuristic
+    vt_score = (
+        stats.get("malicious", 0) +
+        stats.get("suspicious", 0)
+    )
+
     return {"vt_score": vt_score}

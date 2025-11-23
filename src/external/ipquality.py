@@ -2,45 +2,89 @@
 import httpx
 from dotenv import load_dotenv
 
-load_dotenv()  # Load environment variables from .env
+# Load variables
+load_dotenv()
 
-IPQUALITY_API_KEY = os.getenv("IPQUALITYSCORE_API_KEY")  # Read IPQualityScore API key
-IPQUALITY_URL = "https://ipqualityscore.com/api/json/ip"  # Base URL for IPQS API
+IPQUALITY_API_KEY = os.getenv("IPQUALITYSCORE_API_KEY")
+BASE_URL = "https://ipqualityscore.com/api/json/ip"
 
 
-def fetch_quality(ip: str) -> dict:
-    # Fetches fraud score and VPN status for a given IP using IPQualityScore API.
-    # Returns safe None-based fallback on any error or missing API key.
+async def fetch_quality(ip: str) -> dict:
     """
-    Возвращает:
-      {
-        "fraud_score": int | None,
-        "vpn": bool | None
-      }
+    Correct async version for IPQualityScore.
+    Works stably even when the server breaks TLS handshake
+    or responds with a non-standard chain.
     """
 
-    # Early fallback if API key is missing
+    # Missing key → fallback
     if not IPQUALITY_API_KEY:
-        return {"fraud_score": None, "vpn": None}
+        print(f"[IPQS] No IPQUALITYSCORE_API_KEY provided. Using fallback for {ip}")
+        return {
+            "fraud_score": None,
+            "vpn": None,
+        }
 
-    # Build full request URL
-    url = f"{IPQUALITY_URL}/{IPQUALITY_API_KEY}/{ip}"
+    url = f"{BASE_URL}/{IPQUALITY_API_KEY}/{ip}"
 
     try:
-        # Perform GET request to IPQS API
-        resp = httpx.get(url, timeout=5.0)
-    except Exception:
-        # Network failure or timeout
-        return {"fraud_score": None, "vpn": None}
+        # The ONLY reliable way to call IPQS async:
+        # - disable strict certificate verification
+        # - use explicit AsyncHTTPTransport
+        # - allow retries (server often drops first connection)
+        transport = httpx.AsyncHTTPTransport(retries=2)
 
-    # If status code is not OK — fallback
+        async with httpx.AsyncClient(
+            transport=transport,
+            verify=False,     # IPQS free-tier often has broken cert chain
+            timeout=8.0
+        ) as client:
+            resp = await client.get(url)
+
+    except Exception as e:
+        print(f"[IPQS] Network/TLS error for {ip}: {e!r}")
+        return {
+            "fraud_score": None,
+            "vpn": None,
+        }
+
+    # Wrong HTTP status → fallback (but first print diagnostic)
     if resp.status_code != 200:
-        return {"fraud_score": None, "vpn": None}
+        print(
+            f"[IPQS] Bad status {resp.status_code} for {ip}. "
+            f"Body preview: {resp.text[:200]!r}"
+        )
+        return {
+            "fraud_score": None,
+            "vpn": None,
+        }
 
-    # Parse JSON response (assumes valid JSON from API)
-    data = resp.json()
+    try:
+        data = resp.json()
+    except Exception as e:
+        print(
+            f"[IPQS] JSON parse error for {ip}: {e!r}. "
+            f"Raw response: {resp.text[:200]!r}"
+        )
+        return {
+            "fraud_score": None,
+            "vpn": None,
+        }
 
-    # Return normalized data fields
+    # Special case: IPQS returns success=False with quota or key errors
+    if not data.get("success", True):
+        message = data.get("message", "")
+        print(f"[IPQS] API error for {ip}: success=False, message={message!r}")
+
+        # Specific detection: DAILY QUOTA EXHAUSTED
+        if "exceeded your request quota" in message:
+            print(f"[IPQS] DAILY QUOTA EXHAUSTED for key. Raw={data!r}")
+
+        return {
+            "fraud_score": None,
+            "vpn": None,
+        }
+
+    # Normal behavior
     return {
         "fraud_score": data.get("fraud_score"),
         "vpn": data.get("vpn"),

@@ -1,6 +1,5 @@
 ﻿import os
 import json
-import re
 import logging
 from dotenv import load_dotenv
 from groq import Groq
@@ -11,54 +10,37 @@ log = logging.getLogger("llm_client")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 client = Groq(api_key=GROQ_API_KEY)
 
-
-# Regex to detect a JSON block inside ```json ... ``` markers
-JSON_BLOCK_RE = re.compile(r"```json(.*?)```", re.DOTALL)
-
-
-def extract_json_block(text: str):
-    # Extracts JSON inside a fenced ```json ... ``` block
-    # If no such block is found, returns the entire text as fallback
-    """Извлекает JSON внутри ```json ... ``` или возвращает None."""
-    m = JSON_BLOCK_RE.search(text)
-    if m:
-        return m.group(1).strip()
-    return text  # fallback — вдруг это чистый JSON
+FALLBACK = {
+    "risk_level": "Unknown",
+    "analysis": "LLM analysis unavailable.",
+    "recommendations": "Fallback: manual review recommended.",
+}
 
 
-def analyze_with_llm(threat_data: dict) -> dict:
-    # Performs LLM-based threat analysis and returns JSON result
-    # Returns fallback JSON if key is missing or errors occur
-    fallback = {
-        "risk_level": "Unknown",
-        "analysis": "LLM analysis unavailable.",
-        "recommendations": "Fallback: manual review recommended.",
-    }
+# ------------------------------------------------------------
+# 1. PROMPT BUILDER
+# ------------------------------------------------------------
+def generate_prompt(threat_data: dict) -> str:
+    return (
+        "You MUST return ONLY a valid JSON object.\n"
+        "No text before it. No text after it. No code fences.\n"
+        "Schema:\n"
+        "{\n"
+        '  "risk_level": "Low" | "Medium" | "High",\n'
+        '  "analysis": "string",\n'
+        '  "recommendations": "string"\n'
+        "}\n\n"
+        "Input data:\n"
+        f"{json.dumps(threat_data, ensure_ascii=False)}"
+    )
 
-    # Check if API key exists
-    if not GROQ_API_KEY:
-        log.debug("[FALLBACK] No API key")
-        return fallback
 
-    # Build user prompt containing required JSON schema and input data
-    prompt = f"""
-        Analyze the following IP threat intelligence and return STRICT JSON only.
-
-        Required JSON schema:
-        {{
-          "risk_level": "Low" | "Medium" | "High",
-          "analysis": "string",
-          "recommendations": "string"
-        }}
-
-        Data:
-        {json.dumps(threat_data, ensure_ascii=False)}
-        """
-
+# ------------------------------------------------------------
+# 2. RAW CALL TO LLM (NO PARSING)
+# ------------------------------------------------------------
+def call_llm(prompt: str) -> str | None:
     try:
-        # Call Groq LLM API
-        log.debug("[LLM] calling Groq...")
-        response = client.chat.completions.create(
+        resp = client.chat.completions.create(
             model="llama-3.1-8b-instant",
             messages=[
                 {"role": "system", "content": "Return ONLY JSON."},
@@ -66,27 +48,86 @@ def analyze_with_llm(threat_data: dict) -> dict:
             ],
             temperature=0.2,
         )
+        return resp.choices[0].message.content
+    except Exception as e:
+        log.debug(f"[LLM ERROR] {e}")
+        return None
 
-        # Extract raw message from the response
-        raw_message = response.choices[0].message
-        content = raw_message.content  # Главное исправление!
-        log.debug(f"[LLM] Raw content: {content}")
 
-        # Extract JSON string from possible code block
-        json_text = extract_json_block(content)
-        data = json.loads(json_text)
+# ------------------------------------------------------------
+# 3. JSON EXTRACTOR / SELF-REPAIR
+# ------------------------------------------------------------
+def try_parse_json(text: str):
+    try:
+        return json.loads(text)
+    except Exception:
+        return None
 
-        # Validate required fields
-        if (
-            "risk_level" in data
-            and "analysis" in data
-            and "recommendations" in data
-        ):
+
+def extract_json_block(text: str):
+    """
+    Пробуем найти JSON в тексте:
+    — чистый json
+    — json внутри мусора
+    """
+    # 1. Прямая попытка
+    data = try_parse_json(text)
+    if data is not None:
+        return data
+
+    # 2. Отрезаем текст по первой { и последней }
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        fragment = text[start : end + 1]
+        data = try_parse_json(fragment)
+        if data is not None:
             return data
 
-        return fallback
+    return None
 
-    except Exception as e:
-        # Log and return fallback on any exception
-        log.debug(f"[ERROR] {e!r}")
-        return fallback
+
+def repair_json(text: str) -> dict | None:
+    """
+    Просим LLM исправить JSON. Второй шанс.
+    """
+    fix_prompt = (
+        "Fix the following text into a VALID JSON object. "
+        "Return ONLY the valid JSON.\n\n"
+        f"{text}"
+    )
+
+    fixed = call_llm(fix_prompt)
+    if not fixed:
+        return None
+
+    return extract_json_block(fixed)
+
+
+# ------------------------------------------------------------
+# 4. MAIN ENTRY POINT
+# ------------------------------------------------------------
+def analyze_with_llm(threat_data: dict) -> dict:
+    if not GROQ_API_KEY:
+        return FALLBACK
+
+    # 1) Собираем промпт
+    prompt = generate_prompt(threat_data)
+
+    # 2) Получаем сырой ответ
+    raw = call_llm(prompt)
+    if raw is None:
+        return FALLBACK
+
+    # 3) Парсим JSON из ответа
+    parsed = extract_json_block(raw)
+    if parsed is not None:
+        return parsed
+
+    # 4) Попытка self-repair
+    repaired = repair_json(raw)
+    if repaired is not None:
+        return repaired
+
+    # 5) Fallback
+    return FALLBACK
