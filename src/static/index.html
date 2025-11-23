@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>IP Threat Intelligence</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 700px;
+            margin: 40px auto;
+            padding: 20px;
+            line-height: 1.5;
+        }
+
+        input {
+            padding: 8px;
+            width: 250px;
+            font-size: 16px;
+        }
+
+        button {
+            padding: 8px 12px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+
+        .result-box {
+            margin-top: 25px;
+            padding: 15px;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            background: #fafafa;
+            white-space: pre-wrap;
+        }
+
+        .error {
+            color: #b00020;
+        }
+    </style>
+</head>
+<body>
+
+    <h2>IP Threat Intelligence Analyzer</h2>
+
+    <input id="ipInput" type="text" placeholder="Enter IP (e.g. 8.8.8.8)">
+    <button onclick="analyze()">Analyze</button>
+
+    <div id="output" class="result-box"></div>
+
+    <script>
+        async function analyze() {
+            const ip = document.getElementById("ipInput").value.trim();
+            const output = document.getElementById("output");
+
+            if (!ip) {
+                output.innerHTML = "<span class='error'>Please enter an IP address.</span>";
+                return;
+            }
+
+            output.innerHTML = "Analyzing…";
+
+            try {
+                const res = await fetch(`/api/analyze-ip?ip=${ip}`);
+                if (!res.ok) {
+                    output.innerHTML = `<span class='error'>Error: ${res.status}</span>`;
+                    return;
+                }
+
+                const data = await res.json();
+
+                output.innerHTML =
+                    `IP Address: ${data.ip}\n` +
+                    `Hostname: ${data.hostname || "—"}\n` +
+                    `ISP: ${data.isp || "—"}\n` +
+                    `Country: ${data.country || "—"}\n\n` +
+                    `Abuse Score: ${data.abuse_score}\n` +
+                    `Recent Reports: ${data.recent_reports}\n` +
+                    `VPN/Proxy Detected: ${data.vpn_proxy}\n` +
+                    `Fraud Score: ${data.fraud_score}\n` +
+                    `Risk Score (computed): ${data.risk_score}\n\n` +
+                    `AI Risk Level: ${data.risk_level}\n\n` +
+                    `AI Analysis:\n${data.risk_analysis}\n\n` +
+                    `Recommendations:\n${data.recommendations}`;
+            } catch (err) {
+                output.innerHTML = `<span class='error'>Request failed.</span>`;
+            }
+        }
+    </script>
+
+</body>
+</html>

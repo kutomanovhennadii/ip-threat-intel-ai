@@ -32,3 +32,4 @@ dist/
 
 # Local development artifacts
 .DS_Store
+/.vs
